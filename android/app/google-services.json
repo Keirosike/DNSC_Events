@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1073703968944",
+    "project_id": "dnsc-events",
+    "storage_bucket": "dnsc-events.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1073703968944:android:062f8d247d01327f8a5b75",
+        "android_client_info": {
+          "package_name": "com.example.dnsc_events"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD66zMRU5c20HQc44YGRSfiT9Re7AuTcaM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
