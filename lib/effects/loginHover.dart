@@ -1,317 +1,95 @@
-import 'package:dnsc_events/studentScreen/eventsPage.dart';
-import 'package:dnsc_events/studentScreen/homePage.dart';
 import 'package:flutter/material.dart';
-import 'package:dnsc_events/colors/color.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:dnsc_events/database/auth.dart';
 import 'package:dnsc_events/student.dart';
+import 'package:dnsc_events/colors/color.dart';
+import 'package:dnsc_events/admin.dart';
+
+import 'package:dnsc_events/database/record_info_login.dart';
 
 class GoogleLoginButtons extends StatefulWidget {
-  const GoogleLoginButtons({super.key});
+  final int initialIndex;
+  const GoogleLoginButtons({super.key, this.initialIndex = 0});
 
   @override
   State<GoogleLoginButtons> createState() => _GoogleLoginButtonsState();
 }
 
 class _GoogleLoginButtonsState extends State<GoogleLoginButtons> {
-  String? activeButton; // 'student' or 'admin'
+  String? activeButton;
 
-  void setActive(String button) {
-    setState(() {
-      activeButton = button;
-    });
-
-    // Reset highlight after 1 second
-    Future.delayed(const Duration(seconds: 1), () {
-      setState(() {
-        activeButton = null;
-      });
-    });
+  void setActive(String type) {
+    setState(() => activeButton = type);
+    Future.delayed(
+      const Duration(seconds: 1),
+      () => setState(() => activeButton = null),
+    );
   }
 
-  //student credentials
-  Future<UserCredential?> loginStudent() async {
+  // STUDENT LOGIN
+  Future<void> _loginStudent(BuildContext context) async {
+    setActive("student");
     try {
-      await GoogleSignIn().signOut();
-      final GoogleSignInAccount? googleuser = await GoogleSignIn().signIn();
+      final userCredential = await AuthService.loginStudent(context);
+      if (userCredential != null && userCredential.user != null) {
+        final user = userCredential.user!;
+        print('✅ Student login successful: ${user.email}');
 
-      if (googleuser == null) {
-        return null;
+        try {
+          // Save student info to database (moved to service)
+          await UserDatabaseService.saveStudentInfo(user);
+
+          // Navigate to student home
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const Student(initialIndex: 0)),
+          );
+        } catch (e) {
+          print('❌ Error saving student info: $e');
+          // Still navigate even if saving fails
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const Student(initialIndex: 0)),
+          );
+        }
+      } else {
+        print('❌ Student login failed - no user credential returned');
       }
-
-      if (!googleuser.email.endsWith('@dnsc.edu.ph')) {
-        showDialog(
-          context: context,
-          builder: (_) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20), // Rounded corners
-            ),
-            elevation: 10,
-            backgroundColor: Colors.white,
-            child: Container(
-              padding: EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 60,
-                    color: Colors.redAccent, // Modern icon for error
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Sign-in Failed',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Invalid Gmail. Please use your dnsc.edu.ph account.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey[700]),
-                  ),
-                  SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                      child: Text(
-                        'OK',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-
-        return null;
-      } else if (googleuser.email == 'robles.kurtzidrick@dnsc.edu.ph') {
-        showDialog(
-          context: context,
-          builder: (_) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20), // Rounded corners
-            ),
-            elevation: 10,
-            backgroundColor: Colors.white,
-            child: Container(
-              padding: EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 60,
-                    color: Colors.redAccent, // Modern icon for error
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Sign-in Failed',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Invalid Gmail.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey[700]),
-                  ),
-                  SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                      child: Text(
-                        'OK',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-        return null;
-      }
-
-      final GoogleSignInAuthentication googleAuth =
-          await googleuser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-      return await FirebaseAuth.instance.signInWithCredential(credential);
     } catch (e) {
-      return null;
+      print('❌ Student login error: $e');
     }
   }
 
-  Future<UserCredential?> loginAdmin() async {
+  // ADMIN LOGIN
+  Future<void> _loginAdmin(BuildContext context) async {
+    setActive("admin");
     try {
-      await GoogleSignIn().signOut();
+      final userCredential = await AuthService.loginAdmin(context);
+      if (userCredential != null && userCredential.user != null) {
+        final user = userCredential.user!;
+        print('✅ Admin login successful: ${user.email}');
 
-      final GoogleSignInAccount? googleuser = await GoogleSignIn().signIn();
+        try {
+          // Save admin info to database (moved to service)
+          await UserDatabaseService.saveAdminInfo(user);
 
-      if (googleuser == null) {
-        return null;
-      }
-
-      if (!googleuser.email.endsWith('@dnsc.edu.ph')) {
-        showDialog(
-          context: context,
-          builder: (_) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20), // Rounded corners
-            ),
-            elevation: 10,
-            backgroundColor: Colors.white,
-            child: Container(
-              padding: EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 60,
-                    color: Colors.redAccent, // Modern icon for error
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Sign-in Failed',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Invalid Gmail. Please use your dnsc.edu.ph account.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey[700]),
-                  ),
-                  SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                      child: Text(
-                        'OK',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-
-        return null;
-      }
-
-      final GoogleSignInAuthentication googleAuth =
-          await googleuser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-
-      if (googleuser.email == 'robles.kurtzidrick@dnsc.edu.ph') {
-        return await FirebaseAuth.instance.signInWithCredential(credential);
+          // Navigate to admin panel
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const Admin()),
+          );
+        } catch (e) {
+          print('❌ Error saving admin info: $e');
+          // Still navigate even if saving fails
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const Admin()),
+          );
+        }
       } else {
-        showDialog(
-          context: context,
-          builder: (_) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20), // Rounded corners
-            ),
-            elevation: 10,
-            backgroundColor: Colors.white,
-            child: Container(
-              padding: EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 60,
-                    color: Colors.redAccent, // Modern icon for error
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Sign-in Failed',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  SizedBox(height: 10),
-                  Text(
-                    'Invalid Gmail.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, color: Colors.grey[700]),
-                  ),
-                  SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                      child: Text(
-                        'OK',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-
-        return null;
+        print('❌ Admin login failed - no user credential returned');
       }
     } catch (e) {
-      return null;
+      print('❌ Admin login error: $e');
     }
   }
 
@@ -319,96 +97,50 @@ class _GoogleLoginButtonsState extends State<GoogleLoginButtons> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Student Button
+        // STUDENT BUTTON
         InkWell(
-          onTap: () async {
-            setActive('student');
-
-            final UserCredential = await loginStudent();
-            if (UserCredential != null) {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(builder: (_) => Student()),
-                (route) => false,
-              );
-            }
-          },
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            constraints: BoxConstraints(maxHeight: 48),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: activeButton == 'student'
-                  ? CustomColor.borderGray
-                  : Colors.white,
-              border: Border.all(color: CustomColor.borderGray1, width: 1),
-            ),
-            child: Row(
-              children: [
-                Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Image.asset(
-                    'assets/image/google.png',
-                    height: 70,
-                    width: 18,
-                  ),
-                ),
-                Text(
-                  "Continue with DNSC Google (Students)",
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w300),
-                ),
-              ],
-            ),
+          onTap: () => _loginStudent(context),
+          child: _loginButton(
+            "Continue with DNSC Google (Students)",
+            activeButton == "student",
           ),
         ),
 
-        SizedBox(height: 18),
+        const SizedBox(height: 18),
 
-        // Admin Button
+        // ADMIN BUTTON
         InkWell(
-          onTap: () async {
-            setActive('admin');
-            final UserCredential = await loginAdmin();
-            if (UserCredential != null) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => Eventspage()),
-              );
-            }
-          },
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            width: double.infinity,
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            constraints: BoxConstraints(maxHeight: 48),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              color: activeButton == 'admin'
-                  ? CustomColor.borderGray
-                  : Colors.white,
-              border: Border.all(color: CustomColor.borderGray1, width: 1),
-            ),
-            child: Row(
-              children: [
-                Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Image.asset(
-                    'assets/image/google.png',
-                    height: 70,
-                    width: 18,
-                  ),
-                ),
-                Text(
-                  "Continue with DNSC Google (Admin)",
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w300),
-                ),
-              ],
-            ),
+          onTap: () => _loginAdmin(context),
+          child: _loginButton(
+            "Continue with DNSC Google (Admin)",
+            activeButton == "admin",
           ),
         ),
       ],
+    );
+  }
+
+  // REUSABLE BUTTON UI
+  Widget _loginButton(String text, bool active) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 15),
+      height: 48,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: active ? CustomColor.borderGray : Colors.white,
+        border: Border.all(color: CustomColor.borderGray1, width: 1),
+      ),
+      child: Row(
+        children: [
+          Image.asset('assets/image/google.png', height: 20),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,9 +1,15 @@
+import 'dart:convert';
+
 import 'package:carousel_slider/carousel_slider.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
+
 import 'package:dnsc_events/colors/color.dart';
-import 'package:shimmer/shimmer.dart';
 import 'package:dnsc_events/widget/calendar.dart';
 import 'package:dnsc_events/widget/appbar.dart';
+import 'package:dnsc_events/database/event_service.dart';
+import 'package:dnsc_events/student.dart';
 
 class Homepage extends StatefulWidget {
   const Homepage({super.key});
@@ -12,223 +18,325 @@ class Homepage extends StatefulWidget {
   State<Homepage> createState() => _HomepageState();
 }
 
+/// Simple model for user summary (separate DB node)
+class UserSummary {
+  final int ticketsPurchased;
+  final double totalSpent;
+  final int eventsAttended;
+  final int pendingPayments;
+
+  const UserSummary({
+    required this.ticketsPurchased,
+    required this.totalSpent,
+    required this.eventsAttended,
+    required this.pendingPayments,
+  });
+
+  factory UserSummary.empty() => const UserSummary(
+    ticketsPurchased: 0,
+    totalSpent: 0,
+    eventsAttended: 0,
+    pendingPayments: 0,
+  );
+
+  factory UserSummary.fromMap(Map<dynamic, dynamic> map) {
+    int _toInt(dynamic v) {
+      if (v is int) return v;
+      if (v is String) return int.tryParse(v) ?? 0;
+      if (v is double) return v.toInt();
+      return 0;
+    }
+
+    double _toDouble(dynamic v) {
+      if (v is double) return v;
+      if (v is int) return v.toDouble();
+      if (v is String) return double.tryParse(v) ?? 0;
+      return 0;
+    }
+
+    return UserSummary(
+      ticketsPurchased: _toInt(map['tickets_bought']),
+      totalSpent: _toDouble(map['total_spent']),
+      eventsAttended: _toInt(map['events_attended']),
+      pendingPayments: _toInt(map['pending_payments']),
+    );
+  }
+}
+
 class _HomepageState extends State<Homepage> {
-  final List<String> images = [
-    'assets/image/backgroundLogin.jpg',
-    'assets/image/example.png',
-    'assets/image/backgroundLogin.jpg',
-    'assets/image/example.png',
-  ];
+  final EventService _eventService = EventService();
+  final DatabaseReference _db = FirebaseDatabase.instance.ref();
 
   bool isLoading = true;
+
+  /// Upcoming events pulled from DB (max 4)
+  List<Map<String, dynamic>> _upcomingEvents = [];
+
+  /// Per-user summary
+  UserSummary? _userSummary;
 
   @override
   void initState() {
     super.initState();
-
-    Future.delayed(const Duration(seconds: 2), () {
-      setState(() => isLoading = false);
-    });
+    _loadAll();
   }
+
+  Future<void> _loadAll() async {
+    try {
+      final eventsFuture = _eventService.getUpcomingEvents(
+        maxCount: 4,
+      ); // only upcoming
+      final summaryFuture = _loadUserSummary();
+
+      final results = await Future.wait([eventsFuture, summaryFuture]);
+
+      if (!mounted) return;
+
+      setState(() {
+        _upcomingEvents = results[0] as List<Map<String, dynamic>>;
+        _userSummary = results[1] as UserSummary;
+        isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading homepage data: $e');
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  /// Fetch user summary from a separate node.
+  /// Adjust the path if you use a different structure.
+  ///
+  /// Example DB path:
+  /// user_summaries/{uid}/{
+  ///   tickets_purchased: 2,
+  ///   total_spent: 30000,
+  ///   events_attended: 2,
+  ///   pending_payments: 2
+  /// }
+  Future<UserSummary> _loadUserSummary() async {
+    final User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return UserSummary.empty();
+    }
+
+    try {
+      // USER -> {uid} -> SUMMARY
+      final snapshot = await _db
+          .child('users')
+          .child(user.uid)
+          .child('summary')
+          .get();
+
+      if (!snapshot.exists || snapshot.value == null) {
+        return UserSummary.empty();
+      }
+
+      final value = snapshot.value;
+      if (value is Map) {
+        return UserSummary.fromMap(value);
+      }
+      return UserSummary.empty();
+    } catch (e) {
+      print('Error loading user summary: $e');
+      return UserSummary.empty();
+    }
+  }
+
+  bool get _enableCarousel => _upcomingEvents.length >= 3;
 
   @override
   Widget build(BuildContext context) {
+    // Show loading screen while isLoading is true
+    if (isLoading) {
+      return Scaffold(
+        backgroundColor: CustomColor.background,
+        appBar: Appbar(),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [CircularProgressIndicator(color: CustomColor.primary)],
+          ),
+        ),
+      );
+    }
+
+    // Show actual content when loading is complete
     return Scaffold(
       backgroundColor: CustomColor.background,
-
-      appBar: Appbar(isLoading: isLoading),
-
+      appBar: Appbar(),
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Column(
             children: [
-              isLoading
-                  ? Shimmer.fromColors(
-                      baseColor: Colors.grey.shade300,
-                      highlightColor: Colors.white,
-                      child: Row(
-                        children: [
-                          Container(
-                            height: 26,
-                            width: 180,
-                            color: Colors.grey.shade300,
-                          ),
-                        ],
-                      ),
-                    )
-                  : Row(
-                      children: [
-                        Text(
-                          "Welcome ",
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'InterExtra',
-                            fontSize: 24,
-                          ),
-                        ),
-                        Text(
-                          "Back",
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'InterExtra',
-                            fontSize: 24,
-                            color: CustomColor.primary,
-                          ),
-                        ),
-                        Text(
-                          "!",
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontFamily: 'InterExtra',
-                            fontSize: 24,
-                          ),
-                        ),
-                      ],
+              Row(
+                children: [
+                  Text(
+                    "Welcome ",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'InterExtra',
+                      fontSize: 24,
                     ),
-
-              SizedBox(height: 10),
-
-              isLoading
-                  ? Shimmer.fromColors(
-                      baseColor: Colors.grey.shade300,
-                      highlightColor: Colors.white,
-                      child: _shimmerStatsLayout(),
-                    )
-                  : realStatsLayout(),
+                  ),
+                  Text(
+                    "Back",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'InterExtra',
+                      fontSize: 24,
+                      color: CustomColor.primary,
+                    ),
+                  ),
+                  Text(
+                    "!",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'InterExtra',
+                      fontSize: 24,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              realStatsLayout(_userSummary ?? UserSummary.empty()),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text(
+                    "Upcoming",
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'InterExtra',
+                    ),
+                  ),
+                  Text(
+                    " Events",
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: CustomColor.primary,
+                      fontFamily: 'InterExtra',
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const Student(initialIndex: 1),
+                        ),
+                      );
+                    },
+                    child: Icon(
+                      Icons.chevron_right_outlined,
+                      color: CustomColor.primary,
+                      size: 30,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 10),
 
-              isLoading
-                  ? Shimmer.fromColors(
-                      baseColor: Colors.grey.shade300,
-                      highlightColor: Colors.white,
-                      child: Row(
-                        children: [
-                          Container(
-                            height: 16,
-                            width: 130,
-                            color: Colors.grey.shade300,
-                          ),
-
-                          Spacer(),
-                          Container(
-                            height: 16,
-                            width: 80,
-                            color: Colors.grey.shade300,
-                          ),
-                          const SizedBox(height: 10),
-                        ],
-                      ),
-                    )
-                  : Row(
-                      children: [
-                        Text(
-                          "Upcoming",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          " Events",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: CustomColor.primary,
-                          ),
-                        ),
-                        Spacer(),
-                        Text("View all", style: TextStyle(fontSize: 12)),
-                        Icon(
-                          Icons.chevron_right_outlined,
-                          color: CustomColor.primary,
-                          size: 20,
-                        ),
-                      ],
+              /// CAROUSEL FROM EVENTS (ONLY UPCOMING, MAX 4)
+              if (_upcomingEvents.isEmpty)
+                Container(
+                  height: 150,
+                  alignment: Alignment.center,
+                  child: Text(
+                    "No upcoming events",
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: CustomColor.subtextColor,
                     ),
-              SizedBox(height: 10),
-              isLoading
-                  ? Shimmer.fromColors(
-                      baseColor: Colors.grey.shade300,
-                      highlightColor: Colors.white,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        children: List.generate(4, (index) {
-                          return Container(
-                            height: 150,
-                            width:
-                                MediaQuery.of(context).size.width *
-                                0.4, // approximate width
-                            margin: EdgeInsets.symmetric(horizontal: 3),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade300,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          );
-                        }),
-                      ),
-                    )
-                  : CarouselSlider.builder(
-                      itemCount: images.length,
-                      itemBuilder: (context, index, realIndex) {
-                        return Container(
-                          margin: EdgeInsets.symmetric(horizontal: 3),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            image: DecorationImage(
-                              image: AssetImage(images[index]),
-                              fit: BoxFit.cover,
-                            ),
+                  ),
+                )
+              else
+                CarouselSlider.builder(
+                  itemCount: _upcomingEvents.length,
+                  itemBuilder: (context, index, realIndex) {
+                    final Map<String, dynamic> event = _upcomingEvents[index];
+                    final String? base64Image =
+                        (event['event_image'] as String?) ?? '';
+
+                    ImageProvider imageProvider;
+                    if (base64Image != null && base64Image.isNotEmpty) {
+                      try {
+                        imageProvider = MemoryImage(base64Decode(base64Image));
+                      } catch (e) {
+                        print(
+                          'Error decoding base64 event image (${event['key']}): $e',
+                        );
+                        imageProvider = const AssetImage(
+                          'assets/image/example.png',
+                        );
+                      }
+                    } else {
+                      imageProvider = const AssetImage(
+                        'assets/image/example.png',
+                      );
+                    }
+
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const Student(initialIndex: 1),
                           ),
                         );
                       },
-                      options: CarouselOptions(
-                        height: 150,
-                        viewportFraction: 0.40,
-                        autoPlay: true,
-                        autoPlayInterval: Duration(seconds: 5),
-                        autoPlayAnimationDuration: Duration(seconds: 5),
-                        enableInfiniteScroll: true,
-                      ),
-                    ),
-              SizedBox(height: 10),
-
-              isLoading
-                  ? Align(
-                      alignment: Alignment.centerLeft,
-                      child: Shimmer.fromColors(
-                        baseColor: Colors.grey.shade300,
-                        highlightColor: Colors.white,
-
-                        child: Container(
-                          width: 150,
-                          height: 18,
-                          color: Colors.grey.shade300,
-                        ),
-                      ),
-                    )
-                  : Row(
-                      children: [
-                        Text(
-                          "Event ",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          image: DecorationImage(
+                            image: imageProvider,
+                            fit: BoxFit.cover,
                           ),
                         ),
-                        Text(
-                          "Calendar",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: CustomColor.primary,
-                          ),
-                        ),
-                      ],
+                      ),
+                    );
+                  },
+                  options: CarouselOptions(
+                    height: 150,
+                    viewportFraction: 0.40,
+                    autoPlay: _enableCarousel,
+                    autoPlayInterval: const Duration(seconds: 5),
+                    autoPlayAnimationDuration: const Duration(seconds: 5),
+                    enableInfiniteScroll: _enableCarousel,
+                  ),
+                ),
+
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text(
+                    "Event ",
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'InterExtra',
                     ),
-
-              SizedBox(height: 10),
-
+                  ),
+                  Text(
+                    "Calendar",
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: CustomColor.primary,
+                      fontFamily: 'InterExtra',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
               const Calendar(),
             ],
           ),
@@ -238,29 +346,13 @@ class _HomepageState extends State<Homepage> {
   }
 }
 
-Widget _shimmerStatsLayout() {
-  return Wrap(
-    spacing: 10,
-    runSpacing: 10,
-    children: List.generate(4, (_) {
-      return Container(
-        height: 90,
-        width: 165,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade300,
-          borderRadius: BorderRadius.circular(12),
-        ),
-      );
-    }),
-  );
-}
-
-Widget realStatsLayout() {
+/// REAL STATS LAYOUT – now uses [UserSummary] from DB
+Widget realStatsLayout(UserSummary summary) {
   return Wrap(
     spacing: 10,
     runSpacing: 10,
     children: [
-      //upper-left
+      // upper-left
       Container(
         height: 90,
         width: 165,
@@ -268,24 +360,52 @@ Widget realStatsLayout() {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(width: 1, color: CustomColor.borderGray),
           color: Colors.white,
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 2,
+              spreadRadius: 1,
+              offset: Offset(0, 1),
+            ),
+          ],
         ),
         child: Padding(
           padding: const EdgeInsets.all(10),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                "Ticket Purchases",
-                style: TextStyle(fontSize: 13, color: CustomColor.subtextColor),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Ticket Purchases",
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: CustomColor.subtextColor,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Icon(
+                    Icons.confirmation_num_outlined,
+                    color: Color(0xFF4726BF),
+                  ),
+                ],
               ),
-              Spacer(),
-
-              Image.asset('assets/icon/ticketIcon.png'),
+              const SizedBox(height: 5),
+              Text(
+                summary.ticketsPurchased.toString(),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontFamily: 'InterExtra',
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF4726BF),
+                ),
+              ),
             ],
           ),
         ),
       ),
-      //upper-right
+      // upper-right
       Container(
         height: 90,
         width: 165,
@@ -293,60 +413,114 @@ Widget realStatsLayout() {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(width: 1, color: CustomColor.borderGray),
           color: Colors.white,
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 2,
+              spreadRadius: 1,
+              offset: Offset(0, 1),
+            ),
+          ],
         ),
         child: Padding(
           padding: const EdgeInsets.all(10),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                "Total Spent",
-                style: TextStyle(fontSize: 13, color: CustomColor.subtextColor),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Total Spent",
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: CustomColor.subtextColor,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.payments_outlined, color: Color(0xFF960E0E)),
+                ],
               ),
-              Spacer(),
-
-              Image.asset('assets/icon/cash.png'),
+              const SizedBox(height: 5),
+              Text(
+                "₱${summary.totalSpent.toStringAsFixed(2)}",
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontFamily: 'InterExtra',
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF960E0E),
+                ),
+              ),
             ],
           ),
         ),
       ),
-
-      //bottom-left
+      // bottom-left
       Container(
         height: 90,
         width: 165,
-
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(width: 1, color: CustomColor.borderGray),
           color: Colors.white,
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 2,
+              spreadRadius: 1,
+              offset: Offset(0, 1),
+            ),
+          ],
         ),
         child: Padding(
           padding: const EdgeInsets.all(10),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                "Events Attended",
-                style: TextStyle(fontSize: 13, color: CustomColor.subtextColor),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Events Attended",
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: CustomColor.subtextColor,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.event_outlined, color: Color(0xFF056405)),
+                ],
               ),
-              Spacer(),
-
-              Image.asset('assets/icon/dollarCoin.png'),
+              const SizedBox(height: 5),
+              Text(
+                summary.eventsAttended.toString(),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontFamily: 'InterExtra',
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF056405),
+                ),
+              ),
             ],
           ),
         ),
       ),
-
-      //bottom-right
+      // bottom-right
       Container(
         height: 90,
         width: 165,
-
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(width: 1, color: CustomColor.borderGray),
           color: Colors.white,
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 2,
+              spreadRadius: 1,
+              offset: Offset(0, 1),
+            ),
+          ],
         ),
         child: Padding(
           padding: const EdgeInsets.all(10),
@@ -363,19 +537,21 @@ Widget realStatsLayout() {
                       color: CustomColor.subtextColor,
                     ),
                   ),
-                  Spacer(),
-
-                  Image.asset('assets/icon/shield.png'),
+                  const Spacer(),
+                  Icon(
+                    Icons.warning_amber_outlined,
+                    color: Colors.orange.shade700,
+                  ),
                 ],
               ),
-              SizedBox(height: 6),
+              const SizedBox(height: 5),
               Text(
-                "2",
+                '₱${summary.pendingPayments.toString()}',
                 style: TextStyle(
                   fontSize: 24,
                   fontFamily: 'InterExtra',
                   fontWeight: FontWeight.w800,
-                  color: CustomColor.green,
+                  color: Colors.orange.shade700,
                 ),
               ),
             ],

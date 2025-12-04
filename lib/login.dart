@@ -58,17 +58,8 @@ class LoginState extends State<Login> {
                     children: [
                       Image.asset(
                         'assets/image/dnscEvents.png',
-                        width: 60,
-                        height: 60,
-                      ),
-
-                      Text(
-                        'DNSC Events',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'InterExtra',
-                        ),
+                        width: 80,
+                        height: 80,
                       ),
                     ],
                   ),
