@@ -1,10 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:dnsc_events/colors/color.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 class QRTicketScanner extends StatefulWidget {
-  final String eventId; // 👈 event we are checking in for
+  final String eventId; // event we are checking in for (as String)
 
   const QRTicketScanner({super.key, required this.eventId});
 
@@ -17,8 +18,10 @@ class _QRTicketScannerState extends State<QRTicketScanner> {
   final DatabaseReference _db = FirebaseDatabase.instance.ref();
   final MobileScannerController _cameraController = MobileScannerController();
 
-  // 🔹 MAIN ENTRY: called when a QR is scanned from the camera
+  // 🔹 Called when a QR is scanned from the camera
   Future<void> _onQrScanned(String rawValue) async {
+    print('🔍 QR scanned rawValue = "$rawValue"');
+
     setState(() {
       _isScanning = false; // pause scanning while validating
     });
@@ -26,8 +29,9 @@ class _QRTicketScannerState extends State<QRTicketScanner> {
     try {
       final bool isValid = await _validateTicket(rawValue);
       _showResultSnackbar(isValid);
-    } catch (e) {
+    } catch (e, st) {
       print('❌ Error validating ticket: $e');
+      print(st);
       _showResultSnackbar(false);
     } finally {
       // Auto reset after 2 seconds
@@ -39,65 +43,116 @@ class _QRTicketScannerState extends State<QRTicketScanner> {
 
   /// 🔍 Validate QR data against Firebase
   ///
-  /// Expected QR format: "<eventId>|<ticketId>"
+  /// Supports TWO formats:
+  /// 1) JSON: {"ticket_id":"...","event_id":4,...}
+  /// 2) Plain: "<eventId>|<ticketId>"
   Future<bool> _validateTicket(String rawValue) async {
-    // 1️⃣ Parse QR
-    final parts = rawValue.split('|');
-    if (parts.length != 2) {
-      print('⚠️ Invalid QR format');
-      return false;
+    String scannedEventId = '';
+    String ticketId = '';
+
+    // 1️⃣ Try JSON decode first (your current QR format)
+    try {
+      final decoded = jsonDecode(rawValue);
+
+      if (decoded is Map<String, dynamic>) {
+        scannedEventId = decoded['event_id']?.toString().trim() ?? '';
+        ticketId = decoded['ticket_id']?.toString().trim() ?? '';
+
+        print(
+          '🧩 Parsed JSON QR -> event_id="$scannedEventId", ticket_id="$ticketId"',
+        );
+      } else {
+        print('⚠️ Decoded JSON is not a Map, got: $decoded');
+      }
+    } catch (e) {
+      print('⚠️ rawValue is not JSON: $e');
     }
 
-    final String scannedEventId = parts[0];
-    final String ticketId = parts[1];
+    // 2️⃣ If JSON parsing failed or fields missing, fallback to "<eventId>|<ticketId>"
+    if (scannedEventId.isEmpty || ticketId.isEmpty) {
+      final parts = rawValue.split('|');
+      print('🧩 Fallback split parts = $parts');
 
-    // 2️⃣ Check event matches current event
-    if (scannedEventId != widget.eventId) {
+      if (parts.length != 2) {
+        print('⚠️ Invalid QR format (expected JSON or "<eventId>|<ticketId>")');
+        return false;
+      }
+
+      scannedEventId = parts[0].trim();
+      ticketId = parts[1].trim();
+    }
+
+    print(
+      '🔎 scannedEventId="$scannedEventId" | currentEventId="${widget.eventId}" | ticketId="$ticketId"',
+    );
+
+    // 3️⃣ Check event matches current event
+    if (scannedEventId != widget.eventId.trim()) {
       print(
-        '⚠️ Ticket is for another event. scanned: $scannedEventId, current: ${widget.eventId}',
+        '⚠️ Ticket is for another event. scanned: "$scannedEventId", current: "${widget.eventId}"',
       );
       return false;
     }
 
-    // 3️⃣ Look up in /transactions by ticket_id
-    final txSnapshot = await _db
-        .child('ticket_purchase')
-        .orderByChild('ticket_id')
-        .equalTo(ticketId)
-        .get();
+    // 4️⃣ Look up ticket directly by KEY in /ticket_purchase/{ticketId}
+    final txSnapshot = await _db.child('ticket_purchase').child(ticketId).get();
+
+    print('📡 txSnapshot.exists = ${txSnapshot.exists}');
+    if (txSnapshot.exists) {
+      print('📦 txSnapshot.value = ${txSnapshot.value}');
+    }
 
     if (!txSnapshot.exists) {
-      print('⚠️ No transaction found for ticket_id: $ticketId');
+      print('⚠️ No ticket_purchase found for ticketId (key): $ticketId');
       return false;
     }
 
-    // Assume first match is the relevant transaction
-    final txDataRaw = txSnapshot.children.first.value;
+    final txDataRaw = txSnapshot.value;
     if (txDataRaw is! Map) {
-      print('⚠️ Transaction data is not a Map');
+      print('⚠️ ticket_purchase data is not a Map. Got: $txDataRaw');
       return false;
     }
 
     final Map<dynamic, dynamic> txData = txDataRaw;
 
-    final String txEventId = txData['event_id']?.toString() ?? '';
-    final String status = txData['status']?.toString() ?? '';
+    final String txEventId = txData['event_id']?.toString().trim() ?? '';
+    final String paymentStatusRaw = txData['payment_status']?.toString() ?? '';
+    final String paymentStatus = paymentStatusRaw.toLowerCase().trim();
+    final String orderStatusRaw = txData['order_status']?.toString() ?? '';
+    final String orderStatus = orderStatusRaw.toLowerCase().trim();
 
-    // 4️⃣ Double-check event again from transaction
-    if (txEventId != widget.eventId) {
-      print('⚠️ Transaction event_id does not match current event');
+    print(
+      '🧾 From DB -> event_id="$txEventId", payment_status="$paymentStatusRaw", order_status="$orderStatusRaw"',
+    );
+
+    // 5️⃣ Double-check event again from record
+    if (txEventId != widget.eventId.trim()) {
+      print(
+        '⚠️ DB event_id does not match current event. txEventId="$txEventId" current="${widget.eventId}"',
+      );
       return false;
     }
 
-    // 5️⃣ Check status (Paid / Pending / Used ...)
-    if (status != 'Paid') {
-      print('⚠️ Ticket not in Paid status (found: $status)');
+    // 6️⃣ Check payment/order status
+    // 👉 Adjust this rule as you like:
+    // For now: require payment_status == "paid"
+    if (paymentStatus != 'paid') {
+      print(
+        '⚠️ Ticket not in paid status (found payment_status="$paymentStatusRaw")',
+      );
       return false;
     }
 
-    // OPTIONAL: Mark as checked in (only valid once)
-    // await txSnapshot.children.first.ref.child('checked_in').set(true);
+    // (Optional) Also enforce order_status == "confirmed"
+    // if (orderStatus != 'confirmed') {
+    //   print('⚠️ Order is not confirmed (order_status="$orderStatusRaw")');
+    //   return false;
+    // }
 
+    // OPTIONAL: mark as checked_in once used
+    // await txSnapshot.ref.child('checked_in').set(true);
+
+    print('✅ Ticket is VALID');
     return true;
   }
 
@@ -211,7 +266,6 @@ class _QRTicketScannerState extends State<QRTicketScanner> {
                     final String? raw = barcodes.first.rawValue;
                     if (raw == null || raw.isEmpty) return;
 
-                    // Stop scanning & validate
                     _onQrScanned(raw);
                   },
                 ),
@@ -222,7 +276,7 @@ class _QRTicketScannerState extends State<QRTicketScanner> {
             ),
           ),
 
-          // Bottom area (info only now, scanning is automatic)
+          // Bottom info area
           Container(
             padding: const EdgeInsets.all(20),
             color: Colors.white,

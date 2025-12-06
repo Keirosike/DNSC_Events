@@ -551,14 +551,12 @@ class _ReadeventState extends State<Readevent> {
                     right: 5,
                     child: IconButton(
                       onPressed: () {
-                        final eventId =
-                            widget.eventData['event_id']?.toString() ??
-                            ''; // very important
-
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => QRTicketScanner(eventId: eventId),
+                            builder: (_) => QRTicketScanner(
+                              eventId: widget.eventData['event_id'].toString(),
+                            ),
                           ),
                         );
                       },
