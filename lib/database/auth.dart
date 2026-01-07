@@ -8,6 +8,8 @@ class AuthService {
     'inajatmavil@gmail.com',
     'kurtzidrickguno.robles@gmail.com',
     'rowelyngimpao7@gmail.com',
+    'danielopella4@gmail.com',
+    'masinapoc.jamaica@dnsc.edu.ph',
   ];
   static Future<UserCredential?> loginStudent(BuildContext context) async {
     try {
